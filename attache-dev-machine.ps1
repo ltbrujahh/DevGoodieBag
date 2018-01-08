@@ -1,37 +1,136 @@
 # Boxstarter script tinkered from http://blog.zerosharp.com/provisioning-a-new-development-machine-with-boxstarter/
 
+# Test-PendingReboot is throwing false negatives
 # cinst     - choco install
-# cinstm    - install with chocolatey if missing
 
-# Allow reboots
-$Boxstarter.RebootOk=$true
-$Boxstarter.NoPassword=$false
-$Boxstarter.AutoLogin=$true
+# Variables
+$windowsSettingsMutex = Join-Path $env:TEMP "win10DesktopSettings.att"
+$devLiteToolsMutex = Join-Path $env:TEMP "devLiteTools.att"
+$isFinalRestartMutex = Join-Path $env:TEMP "isFinalRestart.att"
 
-# Basic setup
+$devLiteTools = @("7zip", "notepad2", "notepadplusplus")
+
+$mutexes = @($windowsSettingsMutex, $devLiteToolsMutex, $isFinalRestartMutex)
+
+# Functions --------------------------------------------------------------
+function Invoke-Log ($comment) {
+    # Write-Host "Invoke-Log: $comment" -ForegroundColor "Yellow"
+    "LOG: $comment"
+}
+
+function Invoke-Error ($comment) {
+    Write-Host "ERR: $comment" -ForegroundColor "Red"
+}
+
+function Invoke-LogExist ($comment) {
+    Invoke-Log "$comment already exists. Skipping step."
+}
+
+function Invoke-Cleanup {
+    Invoke-Log "Cleaning up temp files..."
+
+    foreach ($mutex in $mutexes) {
+        Remove-File $mutex
+    }
+}
+
+function Invoke-RestartComputer ($mutex) {
+    if (Test-Path $mutex) {
+        Invoke-Log "Completed restart!"
+    }
+    else {
+        Invoke-Log "Attempting to restart computer..."
+
+        if (Test-PendingReboot) { 
+            Invoke-Log "Requires restart!"
+        }
+        else {
+            Invoke-Log "Does not require restart, restarting anyway!"
+        }
+    
+        $input = Read-Host -Prompt "Press ENTER for restart..."
+    
+        if ($input) { 
+            Invoke-Log "Cancelled restart." 
+        } 
+        else { 
+            Set-FlagCompleted $mutex
+            Invoke-Reboot 
+        }
+    }
+}
+
+function Set-FlagCompleted ($flag) {
+    $filename = Split-Path $flag -Leaf
+    Invoke-Log "Setting flag '$filename'"
+
+    New-Item $flag -ItemType file
+}
+
+function Remove-File ($path) {
+    Remove-Item $path
+
+    if (Test-Path $path) { Invoke-Error "Error removing $path" }    
+    else { Invoke-Log "Removed $path" }
+}
+# ------------------------------------------------------------------------
+
+Invoke-Log "Flags for auto login on reboot..."
+$Boxstarter.RebootOk = $true
+$Boxstarter.NoPassword = $false
+$Boxstarter.AutoLogin = $true
+
+# Setup PowerShell environment
+Invoke-Log "Release Restriction Level 0..."
 Update-ExecutionPolicy Unrestricted
-Set-ExplorerOptions -showHidenFilesFoldersDrives -showProtectedOSFiles -showFileExtensions
-Enable-RemoteDesktop
-Disable-InternetExplorerESC
-Disable-UAC
-Disable-BingSearch
-#Set-TaskbarSmall
 
-if (Test-PendingReboot) { Invoke-Reboot }
+# Workstation settings
+if (Test-Path $windowsSettingsMutex) {
+    Invoke-LogExist $windowsSettingsMutex
+}
+else {
+    Invoke-Log "Setting up Windows 10 settings..."
+
+    Set-ExplorerOptions -showHidenFilesFoldersDrives -showProtectedOSFiles -showFileExtensions
+    Enable-RemoteDesktop
+    Disable-InternetExplorerESC
+    Disable-UAC
+    Disable-BingSearch
+    # Set-TaskbarSmall
+
+    Set-FlagCompleted $windowsSettingsMutex
+
+    if (Test-PendingReboot) { Invoke-Reboot }
+}
 
 # Update Windows and reboot if necessary
 # Install-WindowsUpdate -AcceptEula
 # if (Test-PendingReboot) { Invoke-Reboot }
 
+# dev IDEs
+# cinst VisualStudioCode
+# cinst VisualStudio2017Professional
+
 # dev tools
-cinstm VisualStudioCode
+if (Test-Path $devLiteToolsMutex) {
+    Invoke-LogExist $devLiteToolsMutex
+}
+else {
+    Invoke-Log "Installing lite Dev tools"
+    
+    foreach ($tool in $devLiteTools) {
+        cinst $tool
+    }
 
-# helpful tools
-cinstm 7zip
-cinstm notepad2
-cinstm notepadplusplus
+    Set-FlagCompleted $devLiteToolsMutex
 
-if (Test-PendingReboot) { Invoke-Reboot }
+    if (Test-PendingReboot) { Invoke-Reboot }
+}
+
+Invoke-RestartComputer $isFinalRestartMutex
+Invoke-Cleanup
+
+# if (Test-PendingReboot) { Invoke-Reboot }
 
 ####
 
